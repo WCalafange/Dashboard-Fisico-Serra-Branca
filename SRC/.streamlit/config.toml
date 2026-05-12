@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#32CD32"          # Verde Limão (para botões e destaques)
+backgroundColor = "#0E1117"       # Azul Marinho muito escuro (quase preto)
+secondaryBackgroundColor = "#070738" # Azul um pouco mais claro para a sidebar
+textColor = "#FFFFFF"             # Texto branco para contraste
+font = "sans serif"
