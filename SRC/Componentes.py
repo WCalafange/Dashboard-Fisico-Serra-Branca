@@ -2,382 +2,348 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import pandas as pd
+import numpy as np
+import unicodedata
+import re
 
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(layout="wide", page_title="Análise de Desempenho")
+# --- FUNÇÃO DE SANITIZAÇÃO ABSOLUTA ---
+def sanitizar(texto):
+    t = str(texto).upper().strip()
+    t = ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+    t = re.sub(r'[^A-Z0-9]', '', t)
+    return t
 
 
-class AbaDesempenho:
-    METRICAS_POR_POSICAO = {
-        'Zagueiro': ['ACOES', '% ACOES COM SUCESSO', 'FALTAS', 'FALTAS SOFRIDAS', 'PASSES PROGRESSIVOS',
-                     '% PASSES PROGRESSIVOS CONCLUIDOS',
-                     'DISPUTAS', '% DISPUTAS GANHAS', 'DESARMES REALIZADOS', '% DESARMES REALIZADOS COM SUCESSO',
-                     'PERDA DA BOLA', 'RETOMADA DE POSSE',
-                     'BOLA RECUPERADA'],
-        'Lateral': ['ACOES', '% ACOES COM SUCESSO', 'FALTAS', 'FALTAS SOFRIDAS', 'PASSES PROGRESSIVOS',
-                    '% PASSES PROGRESSIVOS CONCLUIDOS', 'CRUZAMENTOS',
-                    'CHANCES CRIADAS', 'DISPUTAS', '% DISPUTAS GANHAS', 'DESARMES REALIZADOS',
-                    '% DESARMES REALIZADOS COM SUCESSO', 'DRIBLES FEITOS',
-                    '% DRIBLES FEITOS COM SUCESSO', 'PERDA DA BOLA', 'RETOMADA DE POSSE', 'BOLA RECUPERADA'],
-        'Volante': ['ACOES', '% ACOES COM SUCESSO', 'FALTAS', 'FALTAS SOFRIDAS', 'PASSES PROGRESSIVOS',
-                    '% PASSES PROGRESSIVOS CONCLUIDOS', 'DISPUTAS',
-                    '% DISPUTAS GANHAS', 'DESARMES REALIZADOS', '% DESARMES REALIZADOS COM SUCESSO', 'ACOES ULTIMO 3º',
-                    '% ACOES ULTIMO 3º COM SUCESSO', 'PASSES CHAVE',
-                    'CHANCES CRIADAS', 'PERDA DA BOLA', 'RETOMADA DE POSSE', 'BOLA RECUPERADA'],
-        'Meia': ['ACOES', '% ACOES COM SUCESSO', 'FINALIZACOES', 'FINALIZACOES NO ALVO', 'CHANCES DE GOL',
-                 'CHANCES CRIADAS', 'FALTAS', 'FALTAS SOFRIDAS',
-                 'PASSES PROGRESSIVOS', '% PASSES PROGRESSIVOS CONCLUIDOS', 'ACOES ULTIMO 3º',
-                 '% ACOES ULTIMO 3º COM SUCESSO', 'DRIBLES FEITOS', '% DRIBLES FEITOS COM SUCESSO',
-                 'PASSES CHAVE', 'RETOMADA DE POSSE', 'PERDA DA BOLA', 'DISPUTAS', '% DISPUTAS GANHAS',
-                 'BOLA RECUPERADA'],
-        'Extremo': ['ACOES', '% ACOES COM SUCESSO', 'ACOES ULTIMO 3º', '% ACOES ULTIMO 3º COM SUCESSO', 'FINALIZACOES',
-                    'FINALIZACOES NO ALVO', 'CHANCES DE GOL',
-                    'CHANCES CRIADAS', 'FALTAS', 'FALTAS SOFRIDAS', 'PASSES PROGRESSIVOS',
-                    '% PASSES PROGRESSIVOS CONCLUIDOS', 'DRIBLES FEITOS',
-                    '% DRIBLES FEITOS COM SUCESSO', 'PASSES CHAVE', 'CRUZAMENTOS', 'DISPUTAS', '% DISPUTAS GANHAS'],
-        'Atacante': ['ACOES', '% ACOES COM SUCESSO', 'ACOES ULTIMO 3º', '% ACOES ULTIMO 3º COM SUCESSO', 'FINALIZACOES',
-                     'FINALIZACOES NO ALVO',
-                     'CHANCES DE GOL', 'CHANCES CRIADAS', 'FALTAS', 'FALTAS SOFRIDAS', 'PASSES PROGRESSIVOS',
-                     '% PASSES PROGRESSIVOS CONCLUIDOS',
-                     'DRIBLES FEITOS', '% DRIBLES FEITOS COM SUCESSO', 'DISPUTAS', '% DISPUTAS GANHAS', 'PASSES CHAVE']
-    }
+# Extrai o valor usando Numpy
+def extrair_valor(df_linha, chaves_possiveis):
+    if df_linha.empty:
+        return 0
 
-    def __init__(self, df_partida, df_completo, atleta):
-        self.df_partida = df_partida
-        self.df_completo = df_completo
-        self.atleta = atleta
+    chaves_sanitizadas = [sanitizar(c) for c in chaves_possiveis]
 
-    def render(self):
-        df_atleta = self.df_partida[self.df_partida['ATLETA'] == self.atleta]
+    for col in df_linha.columns:
+        if sanitizar(col) in chaves_sanitizadas:
+            try:
+                dados_crus = df_linha[col].to_numpy().flatten()
+                if len(dados_crus) == 0:
+                    continue
+                val = dados_crus[0]
+                if pd.isna(val):
+                    return 0
+                val_float = float(val)
+                if val_float.is_integer():
+                    return int(val_float)
+                return round(val_float, 1)
+            except Exception:
+                pass
+    return 0
 
-        if not df_atleta.empty:
-            st.header(f"📊 Análise Individual: {self.atleta}")
-            posicao_atual = df_atleta['POSICAO'].iloc[0]
 
-            # 1. Gráfico de Colunas Agrupadas
-            st.header(f"Comparativo de Fundamentos: {posicao_atual}")
-            metricas_especificas = self.METRICAS_POR_POSICAO.get(posicao_atual, ['INDICE'])
-            metricas_especificas = [m for m in metricas_especificas if m in df_atleta.columns]
+# Lista universal de métricas do CSV
+METRICAS_FISICAS = [
+    'DISTÂNCIA TOTAL (M)', 'DURAÇÃO TOTAL (MIN)', 'DISTÂNCIA RELATIVA (M/MIN)',
+    'VELOCIDADE MÁXIMA (KM/H)', 'DISTÂNCIA >19.8 KM/H', '%DISTÂNCIA>19.8 KM/H',
+    'DISTÂNCIA >25.2 KM/H', '%DISTÂNCIA >25.2 KM/H', 'NºSPRINTS >25.2 KM/H',
+    'DISTÂNCIA ACELERAÇÃO>3M/S²', 'NºACELERAÇÕES >3M/S²',
+    'DISTÂNCIA DESACELERAÇÃO>3M/S²', 'NºDESACELERAÇÕES <-3M/S²',
+    'DISTÂNCIA POTÊNCIA METABÓLICA >25.5 W/KG', 'TRAINING LOAD',
+    'TLMAX_5MIN', 'DYNAMIC INDEX', 'MPMAX', 'PLAYER LOAD', 'STRENGTH INDEX',
+    'DISTÂNCIA', 'VELOCIDADE MÁX', 'TLMAX_5M'
+]
 
-            dados_atleta = df_atleta[metricas_especificas].iloc[0].to_frame().reset_index()
-            dados_atleta.columns = ['Métrica', 'Valor'];
-            dados_atleta['Tipo'] = self.atleta
 
-            dados_media = self.df_partida[self.df_partida['POSICAO'] == posicao_atual][
-                metricas_especificas].mean().to_frame().reset_index()
-            dados_media.columns = ['Métrica', 'Valor'];
-            dados_media['Tipo'] = f"Média {posicao_atual}"
-
-            df_comparativo = pd.concat([dados_atleta, dados_media])
-
-            fig_colunas = px.bar(df_comparativo, x='Métrica', y='Valor', color='Tipo', barmode='group', text_auto='.1f',
-                                 color_discrete_map={self.atleta: '#32CD32', f"Média {posicao_atual}": '#808080'})
-
-            fig_colunas.update_traces(textfont_size=12, textangle=0, textposition="outside", cliponaxis=False)
-            fig_colunas.update_layout(xaxis_tickangle=-45, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                                      font=dict(color='white'))
-            fig_colunas.update_xaxes(fixedrange=True)
-            fig_colunas.update_yaxes(fixedrange=True)
-            st.plotly_chart(fig_colunas, use_container_width=True, config={'displayModeBar': False}, key="grafico_barras_atleta")
-
-            # 2. Evolução Temporal
-            st.markdown("<h3 style='color: #C0C0C0;'>Evolução do índice</h3>", unsafe_allow_html=True)
-
-            # Preparação dos dados
-            df_historico = self.df_completo[self.df_completo['ATLETA'] == self.atleta].sort_values('DATA').copy()
-            df_historico['DATA_STR'] = df_historico['DATA'].dt.strftime('%d/%m/%Y')
-
-            df_media_hist = self.df_completo[
-                (self.df_completo['POSICAO'] == posicao_atual) &
-                (self.df_completo['DATA'].isin(df_historico['DATA']))
-                ].groupby('DATA')['INDICE'].mean().reset_index()
-            df_media_hist['DATA_STR'] = df_media_hist['DATA'].dt.strftime('%d/%m/%Y')
-
-            fig_evolucao = px.line(
-                df_historico,
-                x='DATA_STR',
-                y='INDICE',
-                markers=True,
-                color_discrete_sequence=['#32CD32']
-            )
-
-            fig_evolucao.add_scatter(
-                x=df_media_hist['DATA_STR'],
-                y=df_media_hist['INDICE'],
-                mode='lines+markers',
-                name="Média Posição",
-                line=dict(color='gray', dash='dash')
-            )
-
-            # Ajustes de Layout e Remoção
-            fig_evolucao.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='white'),
-                xaxis=dict(
-                    type='category',
-                    title_text='DATA',
-                    gridcolor='rgba(255, 255, 255, 0.1)',
-                    fixedrange=True
-                ),
-                yaxis=dict(
-                    title_text="ÍNDICE",
-                    gridcolor='rgba(255, 255, 255, 0.1)',
-                    zerolinecolor='rgba(255, 255, 255, 0.2)',
-                    fixedrange=True
-                ),
-                showlegend=True,
-                margin=dict(t=10),
-            )
-
-            st.plotly_chart(fig_evolucao, use_container_width=True, key="grafico_evolucao_atleta")
-
-            # --- SEÇÃO DE MINI GRÁFICOS DINÂMICOS (Cards) ---
-            st.divider()
-            st.subheader(f"Indicadores de Performance - {posicao_atual}")
-
-            metricas_para_exibir = [m for m in metricas_especificas if m in df_historico.columns]
-            cols = st.columns(2)
-
-            for i, metrica in enumerate(metricas_para_exibir):
-                with cols[i % 2]:
-                    fig_mini = go.Figure()
-
-                    # Formatação do rótulo
-                    if metrica.startswith('%'):
-                        texto_pontos = df_historico[metrica].apply(lambda x: f"{x:.1f}%")
-                    else:
-                        texto_pontos = df_historico[metrica].apply(lambda x: f"{x:.1f}")
-
-                    # 1. Gráfico com valores na cor PRETA
-                    fig_mini.add_trace(go.Scatter(
-                        x=df_historico['DATA_STR'],
-                        y=df_historico[metrica],
-                        mode='lines+markers+text',
-                        text=texto_pontos,
-                        textposition="top center",
-                        textfont=dict(size=11, color='black'),
-                        line=dict(color='#B22222', width=3),
-                        marker=dict(symbol='square', size=8, color='#B22222'),
-                        name=metrica
-                    ))
-
-                    # 2. Configuração de Layout com Grades mais Escuras
-                    fig_mini.update_layout(
-                        title=dict(
-                            text=f"<b>{metrica}</b>",
-                            x=0.5,
-                            xanchor='center',
-                            font=dict(size=14, color='black')
-                        ),
-                        paper_bgcolor='white',
-                        plot_bgcolor='white',
-                        margin=dict(l=10, r=10, t=50, b=10),
-                        height=230,
-                        showlegend=False,
-
-                        xaxis=dict(
-                            showgrid=False,
-                            tickfont=dict(size=10, color='gray'),
-                            fixedrange=True
-                        ),
-
-                        yaxis=dict(
-                            showgrid=True,
-                            gridcolor='rgba(0, 0, 0, 0.15)',
-                            showticklabels=False,
-                            zeroline=False,
-                            range=[df_historico[metrica].min() * 0.7, df_historico[metrica].max() * 1.3],
-                            fixedrange=True
-                        ),
-                    )
-
-                    # Linha de média sutil
-                    valor_medio = df_historico[metrica].mean()
-                    fig_mini.add_hline(y=valor_medio, line_dash="dot", line_color="rgba(0, 0, 0, 0.1)", line_width=1)
-
-                    st.plotly_chart(fig_mini, use_container_width=True, config={'displayModeBar': False}, key=f"mini_{metrica}")
-
-            # 5. Histórico Completo
-            st.divider()
-            st.subheader(f"Dados das Partidas Disputadas por {self.atleta}")
-
-            df_display = df_historico.copy()
-            df_display['DATA'] = df_display['DATA_STR']  # Usa a data já formatada acima
-            colunas_remover = ['NOME', 'ATLETA', 'POSICAO']
-            df_display = df_display.drop(columns=colunas_remover, errors='ignore')
-
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
-        else:
-            st.warning("Dados do atleta não encontrados.")
+def obter_colunas_exatas(df_cols):
+    cols_reais = []
+    alvos_sanitizados = [sanitizar(m) for m in METRICAS_FISICAS]
+    for col in df_cols:
+        if sanitizar(col) in alvos_sanitizados:
+            cols_reais.append(col)
+    return list(dict.fromkeys(cols_reais))
 
 
 class AbaEquipe:
     def __init__(self, df_completo):
-        # Recebemos o dataframe total para filtrar dentro da aba
         self.df_geral = df_completo
 
     def render(self):
-        st.header("Comparativo da Equipe")
+        st.header("📊 Painel de Médias da Equipe (Team Average)")
 
-        # --- FILTROS EXCLUSIVOS DA ABA ---
-        f1, f2, f3 = st.columns(3)
+        datas = sorted(self.df_geral['DATA'].dt.strftime('%d/%m/%Y').unique().tolist(), reverse=True)
+        data_sel = st.selectbox("📅 Filtrar Data para as Médias", datas, key="filtro_data_equipe")
 
-        with f1:
-            locais = ["Todos"] + sorted(self.df_geral['LOCAL'].unique().tolist())
-            local_sel = st.selectbox("Filtrar Local", locais, key="filtro_local_aba")
+        df_filtrado = self.df_geral[self.df_geral['DATA'].dt.strftime('%d/%m/%Y') == data_sel]
 
-        with f2:
-            advs = ["Todos"] + sorted(self.df_geral['ADVERSARIO'].unique().tolist())
-            adv_sel = st.selectbox("Filtrar Adversário", advs, key="filtro_adv_aba")
+        # --- CORREÇÃO AQUI ---
+        # Usamos to_numpy().flatten()[0] para garantir a extração do texto puro,
+        # mesmo que existam colunas 'ATIVIDADE' duplicadas lidas do CSV.
+        if not df_filtrado.empty and 'ATIVIDADE' in df_filtrado.columns:
+            atividade_equipe = str(df_filtrado['ATIVIDADE'].to_numpy().flatten()[0])
+            st.caption(f"📌 Atividade Selecionada: :green[{atividade_equipe}]")
 
-        with f3:
-            datas = ["Todas"] + sorted(self.df_geral['DATA'].dt.strftime('%d/%m/%Y').unique().tolist())
-            data_sel = st.selectbox("Filtrar Data", datas, key="filtro_data_aba")
+        team_aver_df = df_filtrado[df_filtrado['PLAYER'].astype(str).str.contains("Team Aver", case=False, na=False)]
 
-        # --- LÓGICA DE FILTRAGEM ---
-        df_filtrado = self.df_geral.copy()
+        if not team_aver_df.empty:
+            st.divider()
+            col1, col2, col3, col4 = st.columns(4)
 
-        if local_sel != "Todos":
-            df_filtrado = df_filtrado[df_filtrado['LOCAL'] == local_sel]
-        if adv_sel != "Todos":
-            df_filtrado = df_filtrado[df_filtrado['ADVERSARIO'] == adv_sel]
-        if data_sel != "Todas":
-            df_filtrado = df_filtrado[df_filtrado['DATA'].dt.strftime('%d/%m/%Y') == data_sel]
+            with col1:
+                st.markdown("### 🏃‍♂️ Volume Geral")
+                st.metric(label="Duração Total", value=f"{extrair_valor(team_aver_df, ['DURAÇÃO TOTAL (MIN)'])} min")
+                st.metric(label="Distância Total",
+                          value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA TOTAL (M)', 'DISTÂNCIA'])} m")
+                st.metric(label="Distância Relativa",
+                          value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA RELATIVA (M/MIN)', 'DISTÂNCIA/MIN'])} m/min")
 
-        if not df_filtrado.empty:
-            df_tab = df_filtrado.copy()
-            df_tab['DATA'] = df_tab['DATA'].dt.strftime('%d/%m/%Y')
+            with col2:
+                st.markdown("### ⚡ Alta Intensidade")
+                st.metric(label="Velocidade Máxima",
+                          value=f"{extrair_valor(team_aver_df, ['VELOCIDADE MÁXIMA (KM/H)', 'VELOCIDADE MÁX'])} km/h")
+                st.metric(label="Dist. Alta Velocidade",
+                          value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA >19.8 KM/H'])} m")
+                st.metric(label="Distância Sprint", value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA >25.2 KM/H'])} m")
+                st.metric(label="Nº Sprints", value=extrair_valor(team_aver_df, ['NºSPRINTS >25.2 KM/H', 'NºSPRINTS']))
 
-            tabela_pivot = df_tab.pivot_table(
-                index=['LOCAL', 'DATA', 'ADVERSARIO', 'POSICAO'],
-                values=['INDICE', 'ACOES', '% ACOES COM SUCESSO', 'DISPUTAS', '% DISPUTAS GANHAS', 'PERDA DA BOLA',
-                                                                     'RETOMADA DE POSSE', 'BOLA RECUPERADA'],
-                aggfunc='mean'
-            )
+            with col3:
+                st.markdown("### 🚀 Acelerações")
+                st.metric(label="Nº Acelerações",
+                          value=extrair_valor(team_aver_df, ['NºACELERAÇÕES >3M/S²', 'NºACELERA']))
+                st.metric(label="Distância Aceleração",
+                          value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA ACELERAÇÃO>3M/S²'])} m")
+                st.metric(label="Nº Desacelerações", value=extrair_valor(team_aver_df, ['NºDESACELERAÇÕES <-3M/S²']))
+                st.metric(label="Distância Desacel.",
+                          value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA DESACELERAÇÃO>3M/S²'])} m")
 
-            # Reordenar para o ÍNDICE vir logo após POSIÇÃO
-            colunas_ordem = ['INDICE', 'ACOES', '% ACOES COM SUCESSO', 'DISPUTAS', '% DISPUTAS GANHAS', 'PERDA DA BOLA',
-                                                                     'RETOMADA DE POSSE', 'BOLA RECUPERADA']
-            tabela_pivot = tabela_pivot.reindex(columns=colunas_ordem)
-
-            styled_df = tabela_pivot.style.background_gradient(
-                cmap='RdYlGn',
-                subset=['INDICE']
-            ).format(precision=1)
-
-            st.dataframe(styled_df, use_container_width=True)
+            with col4:
+                st.markdown("### 🔋 Carga Interna/Externa")
+                st.metric(label="Training Load", value=extrair_valor(team_aver_df, ['TRAINING LOAD']))
+                st.metric(label="TLmax_5m", value=extrair_valor(team_aver_df, ['TLMAX_5MIN', 'TLMAX_5M']))
+                st.metric(label="Dynamic Index", value=extrair_valor(team_aver_df, ['DYNAMIC INDEX']))
+                st.metric(label="Distância Pot. Metabólica",
+                          value=f"{extrair_valor(team_aver_df, ['DISTÂNCIA POTÊNCIA METABÓLICA >25.5 W/KG'])} m")
         else:
-            st.warning("Nenhum dado encontrado para os filtros selecionados.")
+            st.warning("Linha 'Team Aver' não encontrada para esta data.")
+
+        st.divider()
+        st.subheader("Desempenho Geral do Elenco")
+        df_elenco = df_filtrado[~df_filtrado['PLAYER'].astype(str).str.contains("Team Aver", case=False, na=False)]
+        if not df_elenco.empty:
+            df_elenco = df_elenco.loc[:, ~df_elenco.columns.duplicated()]
+            df_elenco = df_elenco.drop(columns=['ATIVIDADE'], errors='ignore')
+            st.dataframe(df_elenco, use_container_width=True, hide_index=True)
+
+class AbaDesempenhoPorData:
+    def __init__(self, df_completo):
+        self.df_geral = df_completo
+
+    def render(self):
+        st.header("📅 Evolução do Desempenho por Data (Média da Equipe)")
+
+        df_team = self.df_geral[
+            self.df_geral['PLAYER'].astype(str).str.contains("Team Aver", case=False, na=False)].copy()
+        df_team = df_team.sort_values(by='DATA')
+
+        if df_team.empty:
+            st.warning("⚠️ Nenhuma linha de 'Team Average' localizada.")
+            return
+
+        df_team['DATA_STR'] = df_team['DATA'].dt.strftime('%d/%m/%Y')
+        datas_disponiveis = df_team['DATA_STR'].unique().tolist()
+
+        datas_sel = st.multiselect("📅 Selecione as Datas para o Histórico", options=datas_disponiveis,
+                                   default=datas_disponiveis, key="datas_evolucao")
+
+        st.markdown("#### 🏃‍♂️ Selecione as Métricas de Interesse")
+        metricas_reais = obter_colunas_exatas(df_team.columns)
+        metricas_sel = []
+
+        with st.expander("Mostrar / Esconder Métricas Físicas", expanded=True):
+            cols_check = st.columns(3)
+            for idx, metrica in enumerate(sorted(metricas_reais)):
+                padrao_marcado = True if idx < 2 else False
+                with cols_check[idx % 3]:
+                    if st.checkbox(metrica, value=padrao_marcado, key=f"chk_met_{metrica}"):
+                        metricas_sel.append(metrica)
+
+        df_filtrado = df_team[df_team['DATA_STR'].isin(datas_sel)]
+        if df_filtrado.empty or len(metricas_sel) == 0:
+            st.info("💡 Selecione uma data e marque as métricas.")
+            return
+
+        st.divider()
+        cols_grade = st.columns(2)
+        for idx, metrica in enumerate(metricas_sel):
+            with cols_grade[idx % 2]:
+                st.markdown(f"#### 📈 Variação de: <span style='color:#32CD32;'>{metrica}</span>",
+                            unsafe_allow_html=True)
+                df_filtrado[metrica] = pd.to_numeric(df_filtrado[metrica], errors='coerce').fillna(0)
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_filtrado['DATA_STR'], y=df_filtrado[metrica], mode='lines+markers+text',
+                    text=df_filtrado[metrica].map(lambda x: f"{int(x)}" if x.is_integer() else f"{round(x, 1)}"),
+                    textposition="top center", line=dict(color='#32CD32', width=3),
+                    marker=dict(size=8, color='#FFFFFF', line=dict(color='#32CD32', width=2))
+                ))
+                fig.update_layout(
+                    height=240, margin=dict(l=20, r=20, t=30, b=20), paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(30,30,30,0.3)', font=dict(color='white', size=11),
+                    xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), showlegend=False
+                )
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 
-        #Grafico de colunas
-        metric_pos = st.selectbox("Desempenho médio das posições por métrica", ['INDICE', 'ACOES', '% ACOES COM SUCESSO', 'DISPUTAS',
-                                                                     '% DISPUTAS GANHAS', 'PERDA DA BOLA',
-                                                                     'RETOMADA DE POSSE', 'BOLA RECUPERADA'])
-        df_posicoes = self.df_geral.groupby('POSICAO')[metric_pos].mean().sort_values(ascending=False).reset_index()
-        fig_pos = px.bar(df_posicoes, x='POSICAO', y=metric_pos, color="POSICAO",
-             # Definir a ordem exata das posições com as cores:
-             color_discrete_map={
-                 'Lateral': '#44FFBB',  # Azul Piscina Claro
-                 'Zagueiro': '#33CCFF',     # Azul Céu
-                 'Meia': '#FFD700',  # Ouro Sutil
-                 'Atacante': '#FF5555', # Vermelho Suave
-                 'Extremo': '#DDA0DD',  # Ameixa
-                 'Volante': '#99FF33'  # Lima Sutil)
-             }
-                         )
-        fig_pos.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color='white'),
-            xaxis=dict(fixedrange=True),
-            yaxis=dict(fixedrange=True)
-        )
-        st.plotly_chart(fig_pos)
+class AbaDesempenhoIndividual:
+    def __init__(self, df_completo, atleta):
+        self.df_geral = df_completo
+        self.atleta = atleta
+
+    def render(self):
+        st.header(f"📊 Análise Individual e Evolução: {self.atleta}")
+
+        df_atleta = self.df_geral[self.df_geral['PLAYER'] == self.atleta].copy()
+        df_atleta = df_atleta.sort_values(by='DATA')
+        df_team = self.df_geral[
+            self.df_geral['PLAYER'].astype(str).str.contains("Team Aver", case=False, na=False)].copy()
+        df_team = df_team.sort_values(by='DATA')
+
+        if df_atleta.empty:
+            st.warning("Dados do atleta não encontrados.")
+            return
+
+        col_posicao = None
+        for col in self.df_geral.columns:
+            if col.upper() in ['POSIÇÃO', 'POSICAO', 'POSITION', 'POS']:
+                col_posicao = col
+                break
+
+        posicao_atleta = None
+        if col_posicao and not df_atleta[col_posicao].dropna().empty:
+            posicao_atleta = str(df_atleta[col_posicao].iloc[0])
+
+        df_atleta['DATA_STR'] = df_atleta['DATA'].dt.strftime('%d/%m/%Y')
+        df_team['DATA_STR'] = df_team['DATA'].dt.strftime('%d/%m/%Y')
+        datas_disponiveis = df_atleta['DATA_STR'].unique().tolist()
+
+        datas_sel = st.multiselect("📅 Selecione as Datas para o Histórico", options=datas_disponiveis,
+                                   default=datas_disponiveis, key=f"datas_evolucao_{self.atleta}")
+
+        st.markdown("#### 🏃‍♂️ Selecione as Métricas de Interesse")
+        metricas_reais = obter_colunas_exatas(df_atleta.columns)
+        metricas_sel = []
+
+        with st.expander("Mostrar / Esconder Métricas Físicas", expanded=True):
+            cols_check = st.columns(3)
+            for idx, metrica in enumerate(sorted(metricas_reais)):
+                padrao_marcado = True if idx < 2 else False
+                with cols_check[idx % 3]:
+                    if st.checkbox(metrica, value=padrao_marcado, key=f"chk_met_atl_{metrica}"):
+                        metricas_sel.append(metrica)
+
+        df_filtrado_atleta = df_atleta[df_atleta['DATA_STR'].isin(datas_sel)].copy()
+        df_filtrado_team = df_team[df_team['DATA_STR'].isin(datas_sel)].copy()
+
+        df_filtrado_posicao = pd.DataFrame()
+        if posicao_atleta:
+            df_mesma_pos = self.df_geral[(self.df_geral[col_posicao] == posicao_atleta) & (
+                ~self.df_geral['PLAYER'].astype(str).str.contains("Team Aver", case=False, na=False))].copy()
+            df_mesma_pos['DATA_STR'] = df_mesma_pos['DATA'].dt.strftime('%d/%m/%Y')
+            df_mesma_pos_filt = df_mesma_pos[df_mesma_pos['DATA_STR'].isin(datas_sel)]
+            if not df_mesma_pos_filt.empty:
+                cols_numericas = df_mesma_pos_filt.select_dtypes(include=['number']).columns
+                df_filtrado_posicao = df_mesma_pos_filt.groupby(['DATA', 'DATA_STR'])[
+                    cols_numericas].mean().reset_index()
+                df_filtrado_posicao = df_filtrado_posicao.sort_values(by='DATA')
+
+        if df_filtrado_atleta.empty or len(metricas_sel) == 0:
+            st.info("💡 Selecione pelo menos uma data e uma métrica.")
+            return
+
+        st.divider()
+        if posicao_atleta:
+            st.caption(f"🛡️ Posição detectada: **{posicao_atleta}**")
+
+        cols_grade = st.columns(2)
+        for idx, metrica in enumerate(metricas_sel):
+            with cols_grade[idx % 2]:
+                st.markdown(f"#### 📈 <span style='color:#32CD32;'>{metrica}</span>", unsafe_allow_html=True)
+                df_filtrado_atleta[metrica] = pd.to_numeric(df_filtrado_atleta[metrica], errors='coerce').fillna(0)
+
+                fig = go.Figure()
+                if not df_filtrado_team.empty and metrica in df_filtrado_team.columns:
+                    df_filtrado_team[metrica] = pd.to_numeric(df_filtrado_team[metrica], errors='coerce').fillna(0)
+                    fig.add_trace(
+                        go.Scatter(x=df_filtrado_team['DATA_STR'], y=df_filtrado_team[metrica], mode='lines+markers',
+                                   line=dict(color='rgba(128,128,128,0.5)', width=2, dash='dash'), name='Média Geral'))
+
+                if not df_filtrado_posicao.empty and metrica in df_filtrado_posicao.columns:
+                    fig.add_trace(go.Scatter(x=df_filtrado_posicao['DATA_STR'], y=df_filtrado_posicao[metrica],
+                                             mode='lines+markers', line=dict(color='#1E90FF', width=2, dash='dot'),
+                                             name=f'Média ({posicao_atleta})'))
+
+                fig.add_trace(go.Scatter(
+                    x=df_filtrado_atleta['DATA_STR'], y=df_filtrado_atleta[metrica], mode='lines+markers+text',
+                    text=df_filtrado_atleta[metrica].map(lambda x: f"{int(x)}" if x.is_integer() else f"{round(x, 1)}"),
+                    textposition="top center", line=dict(color='#32CD32', width=3),
+                    marker=dict(size=8, color='#FFFFFF', line=dict(color='#32CD32', width=2)), name=self.atleta
+                ))
+                fig.update_layout(
+                    height=240, margin=dict(l=20, r=20, t=30, b=20), paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(30,30,30,0.3)', font=dict(color='white', size=11),
+                    xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'),
+                    yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.1)'), showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+                )
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 
 class AbaComparacao:
-    METRICAS = AbaDesempenho.METRICAS_POR_POSICAO
-
-    def __init__(self, df_partida, df_completo, atleta1, atleta2, posicao):
+    def __init__(self, df_partida, df_completo, atletas):
         self.df_p = df_partida
         self.df_f = df_completo
-        self.a1 = atleta1
-        self.a2 = atleta2
-        self.pos = posicao
+        self.atletas = atletas
 
     def render(self):
-        # 1. Filtra todas as métricas configuradas para a posição
-        metricas_alvo = [m for m in self.METRICAS.get(self.pos, []) if m in self.df_f.columns]
+        df_p_clean = self.df_p.loc[:, ~self.df_p.columns.duplicated()]
+        metricas_reais = obter_colunas_exatas(df_p_clean.columns)
 
-        # --- GRÁFICO DE BARRAS ---
-        st.markdown(
-            f"<h3 style='color: #C0C0C0; text-align: center;'>Comparativo na Partida: {self.a1} vs {self.a2}</h3>",
-            unsafe_allow_html=True)
+        st.markdown("#### 🏃‍♂️ Selecione as Métricas para Comparação")
+        metricas_sel = []
 
-        df_partida_plot = self.df_p[self.df_p['ATLETA'].isin([self.a1, self.a2])]
-        if not df_partida_plot.empty:
-            df_melt = df_partida_plot.melt(id_vars=['ATLETA'], value_vars=metricas_alvo, var_name='Métrica',
-                                           value_name='Valor')
+        with st.expander("Mostrar / Esconder Métricas Físicas", expanded=True):
+            cols_check = st.columns(3)
+            for idx, metrica in enumerate(sorted(metricas_reais)):
+                padrao_marcado = True if idx < 3 else False
+                with cols_check[idx % 3]:
+                    if st.checkbox(metrica, value=padrao_marcado, key=f"chk_comp_met_{metrica}"):
+                        metricas_sel.append(metrica)
 
-            fig_bar = px.bar(
-                df_melt, x='Métrica', y='Valor', color='ATLETA',
-                barmode='group', text_auto='.1f',
-                color_discrete_map={self.a1: '#32CD32', self.a2: '#FFFFFF'}
-            )
-            fig_bar.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='white'),
-                margin=dict(t=50, b=50),  # Espaço para o título não bater nas barras
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5, title=None)
-            )
-            st.plotly_chart(fig_bar, use_container_width=True, key="bar_partida_final", config={'staticPlot': True})
+        if len(metricas_sel) == 0:
+            st.info("💡 Marque pelo menos uma métrica acima para gerar o gráfico.")
+            return
 
         st.divider()
+        nomes_formatados = " vs ".join(self.atletas)
+        st.markdown(f"<h4 style='color: #C0C0C0; text-align: center;'>{nomes_formatados}</h4>", unsafe_allow_html=True)
 
-        # --- MINI GRÁFICOS DE EVOLUÇÃO  ---
-        st.markdown(f"<h3 style='color: #C0C0C0; text-align: center;'>Comparação Histórica</h3>", unsafe_allow_html=True)
+        df_partida_plot = df_p_clean[df_p_clean['PLAYER'].isin(self.atletas)]
+        if not df_partida_plot.empty:
+            df_melt = df_partida_plot.melt(id_vars=['PLAYER'], value_vars=metricas_sel, var_name='Métrica',
+                                           value_name='Valor')
+            df_melt['Valor'] = pd.to_numeric(df_melt['Valor'], errors='coerce').fillna(0)
 
-        df_hist = self.df_f[self.df_f['ATLETA'].isin([self.a1, self.a2])].copy()
-        df_hist = df_hist.sort_values('DATA')
-        df_hist['DATA_STR'] = df_hist['DATA'].dt.strftime('%d/%m')
+            cores_paleta = ['#32CD32', '#FFFFFF', '#1E90FF']
+            mapa_cores = {}
+            for i, atleta in enumerate(self.atletas):
+                mapa_cores[atleta] = cores_paleta[i] if i < len(cores_paleta) else '#888888'
 
-        cols_graf = st.columns(2)
-        for i, metrica in enumerate(metricas_alvo):
-            with cols_graf[i % 2]:
-                fig = px.line(
-                    df_hist, x='DATA_STR', y=metrica, color='ATLETA',
-                    markers=True, title=metrica,
-                    color_discrete_map={self.a1: '#32CD32', self.a2: '#FFFFFF'}
-                )
-
-                fig.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                    font=dict(color='white'), height=280,
-                    margin=dict(l=10, r=10, t=100, b=40),
-                    title=dict(x=0.5, y=0.85, xanchor='center', yanchor='top'),
-                    legend=dict(
-                        orientation="h", yanchor="bottom", y=1.1,
-                        xanchor="center", x=0.5, title=None, font=dict(size=10)
-                    ),
-                    # Desativa o clique duplo e o arraste
-                    dragmode=False,
-                    clickmode='none'
-                )
-
-                # Impede o Zoom
-                fig.update_xaxes(showgrid=False, title=None, fixedrange=True)
-                fig.update_yaxes(showgrid=True, gridcolor='#333', title=None, fixedrange=True)
-
-                st.plotly_chart(
-                    fig,
-                    use_container_width=True,
-                    key=f"mini_static_{metrica}",
-                    config={
-                        'staticPlot': True,  # Remove botões
-                        'doubleClick': 'reset',  # Desativa reação ao clique duplo
-                        'displayModeBar': False  # Esconde a barra de ferramentas
-                    }
-                )
+            fig_bar = px.bar(
+                df_melt, x='Métrica', y='Valor', color='PLAYER',
+                barmode='group', text_auto='.1f', color_discrete_map=mapa_cores
+            )
+            fig_bar.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color='white'),
+                margin=dict(t=50, b=50), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5)
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
