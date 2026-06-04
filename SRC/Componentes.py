@@ -5,6 +5,27 @@ import pandas as pd
 import numpy as np
 import unicodedata
 import re
+import streamlit.components.v1 as components
+
+
+# --- BOTÃO DE EXPORTAR PDF ---
+def botao_exportar_pdf():
+    # Injeta um botão HTML que aciona o comando de imprimir a página principal (parent)
+    components.html(
+        """
+        <script>
+        function imprimir() {
+            window.parent.print();
+        }
+        </script>
+        <div style="display: flex; justify-content: flex-end;">
+            <button onclick="imprimir()" style="background-color: #32CD32; color: #000000; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-family: sans-serif; font-weight: bold; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                🖨️ Exportar aba para PDF
+            </button>
+        </div>
+        """,
+        height=45
+    )
 
 
 # --- FUNÇÃO DE SANITIZAÇÃO ABSOLUTA ---
@@ -69,7 +90,7 @@ class AbaEquipe:
     def render(self):
         st.header("📊 Painel de Médias da Equipe (Team Average)")
 
-        datas = sorted(self.df_geral['DATA'].dt.strftime('%d/%m/%Y').unique().tolist(), reverse=True)
+        datas = self.df_geral['DATA'].drop_duplicates().sort_values(ascending=True).dt.strftime('%d/%m/%Y').tolist()
         data_sel = st.selectbox("📅 Filtrar Data para as Médias", datas, key="filtro_data_equipe")
 
         df_filtrado = self.df_geral[self.df_geral['DATA'].dt.strftime('%d/%m/%Y') == data_sel]
@@ -137,7 +158,7 @@ class AbaDesempenhoPorData:
         self.df_geral = df_completo
 
     def render(self):
-        st.header("📅 Evolução do Desempenho por Data (Média da Equipe)")
+        st.header("Evolução do Desempenho por Data (Média da Equipe)")
 
         df_team = self.df_geral[
             self.df_geral['PLAYER'].astype(str).str.contains("Team Aver", case=False, na=False)].copy()
@@ -150,10 +171,10 @@ class AbaDesempenhoPorData:
         df_team['DATA_STR'] = df_team['DATA'].dt.strftime('%d/%m/%Y')
         datas_disponiveis = df_team['DATA_STR'].unique().tolist()
 
-        datas_sel = st.multiselect("📅 Selecione as Datas para o Histórico", options=datas_disponiveis,
+        datas_sel = st.multiselect("Selecione as Datas para o Histórico", options=datas_disponiveis,
                                    default=datas_disponiveis, key="datas_evolucao")
 
-        st.markdown("#### 🏃‍♂️ Selecione as Métricas de Interesse")
+        st.markdown("#### Selecione as Métricas de Interesse")
         metricas_reais = obter_colunas_exatas(df_team.columns)
         metricas_sel = []
 
@@ -174,7 +195,7 @@ class AbaDesempenhoPorData:
         cols_grade = st.columns(2)
         for idx, metrica in enumerate(metricas_sel):
             with cols_grade[idx % 2]:
-                st.markdown(f"#### 📈 Variação de: <span style='color:#32CD32;'>{metrica}</span>",
+                st.markdown(f"#### Variação de: <span style='color:#32CD32;'>{metrica}</span>",
                             unsafe_allow_html=True)
                 df_filtrado[metrica] = pd.to_numeric(df_filtrado[metrica], errors='coerce').fillna(0)
 
@@ -226,10 +247,10 @@ class AbaDesempenhoIndividual:
         df_team['DATA_STR'] = df_team['DATA'].dt.strftime('%d/%m/%Y')
         datas_disponiveis = df_atleta['DATA_STR'].unique().tolist()
 
-        datas_sel = st.multiselect("📅 Selecione as Datas para o Histórico", options=datas_disponiveis,
+        datas_sel = st.multiselect("Selecione as Datas para o Histórico", options=datas_disponiveis,
                                    default=datas_disponiveis, key=f"datas_evolucao_{self.atleta}")
 
-        st.markdown("#### 🏃‍♂️ Selecione as Métricas de Interesse")
+        st.markdown("#### Selecione as Métricas de Interesse")
         metricas_reais = obter_colunas_exatas(df_atleta.columns)
         metricas_sel = []
 
@@ -262,12 +283,12 @@ class AbaDesempenhoIndividual:
 
         st.divider()
         if posicao_atleta:
-            st.caption(f"🛡️ Posição detectada: **{posicao_atleta}**")
+            st.caption(f" Posição detectada: **{posicao_atleta}**")
 
         cols_grade = st.columns(2)
         for idx, metrica in enumerate(metricas_sel):
             with cols_grade[idx % 2]:
-                st.markdown(f"#### 📈 <span style='color:#32CD32;'>{metrica}</span>", unsafe_allow_html=True)
+                st.markdown(f"#### <span style='color:#32CD32;'>{metrica}</span>", unsafe_allow_html=True)
                 df_filtrado_atleta[metrica] = pd.to_numeric(df_filtrado_atleta[metrica], errors='coerce').fillna(0)
 
                 fig = go.Figure()
@@ -308,7 +329,7 @@ class AbaComparacao:
         df_p_clean = self.df_p.loc[:, ~self.df_p.columns.duplicated()]
         metricas_reais = obter_colunas_exatas(df_p_clean.columns)
 
-        st.markdown("#### 🏃‍♂️ Selecione as Métricas para Comparação")
+        st.markdown("#### <b> Selecione as Métricas para Comparação</b>", unsafe_allow_html=True)
         metricas_sel = []
 
         with st.expander("Mostrar / Esconder Métricas Físicas", expanded=True):
@@ -325,13 +346,15 @@ class AbaComparacao:
 
         st.divider()
         nomes_formatados = " vs ".join(self.atletas)
-        st.markdown(f"<h4 style='color: #C0C0C0; text-align: center;'>{nomes_formatados}</h4>", unsafe_allow_html=True)
+        st.markdown(f"<h4 style='color: #C0C0C0; text-align: center;'>{nomes_formatados} <span style='font-size:14px; color:#888;'><br>(Média do Período Selecionado)</span></h4>", unsafe_allow_html=True)
 
         df_partida_plot = df_p_clean[df_p_clean['PLAYER'].isin(self.atletas)]
         if not df_partida_plot.empty:
-            df_melt = df_partida_plot.melt(id_vars=['PLAYER'], value_vars=metricas_sel, var_name='Métrica',
-                                           value_name='Valor')
+            df_melt = df_partida_plot.melt(id_vars=['PLAYER'], value_vars=metricas_sel, var_name='Métrica', value_name='Valor')
             df_melt['Valor'] = pd.to_numeric(df_melt['Valor'], errors='coerce').fillna(0)
+
+            # Agrupa os valores calculando a MÉDIA aritmética para o período selecionado.
+            df_melt = df_melt.groupby(['PLAYER', 'Métrica'])['Valor'].mean().reset_index()
 
             cores_paleta = ['#32CD32', '#FFFFFF', '#1E90FF']
             mapa_cores = {}

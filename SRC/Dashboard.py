@@ -4,7 +4,7 @@ import os
 import glob
 import base64
 from Styles import apply_custom_styles
-from Componentes import AbaDesempenhoIndividual, AbaEquipe, AbaComparacao, AbaDesempenhoPorData
+from Componentes import AbaDesempenhoIndividual, AbaEquipe, AbaComparacao, AbaDesempenhoPorData, botao_exportar_pdf
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(layout="wide", page_title="Análise de Desempenho", initial_sidebar_state="collapsed")
@@ -67,8 +67,32 @@ for arquivo in arquivos_csv:
     df_temp['ATIVIDADE'] = atividade
     lista_dfs.append(df_temp)
 
+# --- CRIAÇÃO DO DATAFRAME PRINCIPAL ---
 df = pd.concat(lista_dfs, ignore_index=True)
 df.columns = [str(col).replace('\ufeff', '').strip().upper() for col in df.columns]
+
+# --- INTEGRAÇÃO DO ARQUIVO TXT DE POSIÇÕES ---
+caminho_posicoes = os.path.join(caminho_dados, "posicoes.txt")
+
+if os.path.exists(caminho_posicoes):
+    # 1. Remove qualquer coluna de posição que já tenha vindo dos CSVs para evitar duplicidade
+    colunas_remover = [c for c in df.columns if c in ['POSIÇÃO', 'POSICAO', 'POSITION', 'POS']]
+    if colunas_remover:
+        df = df.drop(columns=colunas_remover)
+
+    try:
+        # 2. Lê o arquivo TXT usando o separador '|'
+        df_posicoes = pd.read_csv(caminho_posicoes, sep='|', names=['PLAYER', 'POSIÇÃO'], engine='python')
+
+        # 3. Padroniza os textos (remove espaços invisíveis e deixa tudo maiúsculo) para o cruzamento bater
+        df_posicoes['PLAYER'] = df_posicoes['PLAYER'].astype(str).str.strip().str.upper()
+        df_posicoes['POSIÇÃO'] = df_posicoes['POSIÇÃO'].astype(str).str.strip().str.upper()
+        df['PLAYER'] = df['PLAYER'].astype(str).str.strip().str.upper()
+
+        # 4. Cruza os dados: anexa a posição certa na linha de cada jogador
+        df = pd.merge(df, df_posicoes, on='PLAYER', how='left')
+    except Exception as e:
+        st.warning(f"Não foi possível processar o arquivo posicoes.txt: {e}")
 
 # --- 5. ORGANIZAÇÃO DAS ABAS ---
 tab1, tab2, tab3, tab4 = st.tabs(
@@ -76,14 +100,17 @@ tab1, tab2, tab3, tab4 = st.tabs(
 
 # --- ABA 1: COMPARATIVO EQUIPE ---
 with tab1:
+    botao_exportar_pdf()
     AbaEquipe(df).render()
 
 # --- ABA 2: COMPARATIVO POR DATA ---
 with tab2:
+    botao_exportar_pdf()
     AbaDesempenhoPorData(df).render()
 
 # --- ABA 3: DESEMPENHO ATLETA ---
 with tab3:
+    botao_exportar_pdf()
     lista_jogadores = [p for p in df['PLAYER'].unique() if "TEAM AVER" not in str(p).upper()]
     atleta_sel = st.selectbox("👤 Selecione o Atleta", sorted(lista_jogadores), key="atleta_sel_aba3")
 
@@ -103,17 +130,26 @@ with tab4:
     c_filtros1, c_filtros2 = st.columns(2)
 
     with c_filtros1:
-        datas_comp = sorted(df['DATA'].dt.strftime('%d/%m/%Y').unique(), reverse=True)
-        data_comp_sel = st.selectbox("📅 Data da Atividade", datas_comp, key="data_comp")
+        # Mantém a organização cronológica crescente criada anteriormente
+        datas_comp = df['DATA'].drop_duplicates().sort_values(ascending=True).dt.strftime('%d/%m/%Y').tolist()
 
-        if data_comp_sel:
-            df_partida_comp = df[df['DATA'].dt.strftime('%d/%m/%Y') == data_comp_sel]
+        # ALTERADO PARA MULTISELECT: Permite selecionar várias datas. Por padrão, seleciona a sessão mais recente.
+        datas_comp_sel = st.multiselect(
+            " Datas das Atividades",
+            options=datas_comp,
+            default=[datas_comp[-1]] if datas_comp else [],
+            key="data_comp_multi"
+        )
 
-        # --- CORREÇÃO APLICADA AQUI ---
-        # Garantindo que extraímos a string limpa mesmo com colunas duplicadas
+        # Filtra usando .isin() para abranger todas as datas marcadas
+        if datas_comp_sel:
+            df_partida_comp = df[df['DATA'].dt.strftime('%d/%m/%Y').isin(datas_comp_sel)]
+
+        # Coleta e exibe de forma limpa todas as atividades únicas do período selecionado
         if not df_partida_comp.empty and 'ATIVIDADE' in df_partida_comp.columns:
-            atividade_comp_poura = str(df_partida_comp['ATIVIDADE'].to_numpy().flatten()[0])
-            st.caption(f"📌 Atividade Selecionada: :green[{atividade_comp_poura}]")
+            atividades_unicas = df_partida_comp['ATIVIDADE'].drop_duplicates().to_numpy().flatten()
+            atividades_str = ", ".join(str(at) for at in atividades_unicas)
+            st.caption(f"📌 Atividades no Período: :green[{atividades_str}]")
 
     with c_filtros2:
         if not df_partida_comp.empty:
@@ -121,7 +157,7 @@ with tab4:
         else:
             lista_comp = []
 
-        # Caixa de multiselect ajustada para até 3 atletas
+        # Mantém o limite máximo de 3 atletas
         atletas_sel = st.multiselect(
             "👤 Selecione até 3 Atletas",
             options=sorted(lista_comp),
@@ -141,4 +177,4 @@ with tab4:
     elif len(atletas_sel) == 0:
         st.info("💡 Selecione pelo menos um atleta na caixa acima para iniciar a comparação.")
     else:
-        st.warning("Não há dados de atletas para a data selecionada.")
+        st.info("💡 Selecione pelo menos uma data para construir a análise comparativa.")
